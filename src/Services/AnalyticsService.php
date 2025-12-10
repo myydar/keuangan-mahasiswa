@@ -17,38 +17,42 @@ class AnalyticsService {
         $currentStats = $this->getMonthlyStats($userId, $currentMonth);
         $lastMonthStats = $this->getMonthlyStats($userId, $lastMonth);
         
-        // Calculate trends
+        // Calculate trends - handle zero/null cases
         $pemasukanTrend = $this->calculateTrend(
-            $currentStats['pemasukan'] ?? 0, 
-            $lastMonthStats['pemasukan'] ?? 0
+            $currentStats['pemasukan'], 
+            $lastMonthStats['pemasukan']
         );
         
         $pengeluaranTrend = $this->calculateTrend(
-            $currentStats['pengeluaran'] ?? 0, 
-            $lastMonthStats['pengeluaran'] ?? 0
+            $currentStats['pengeluaran'], 
+            $lastMonthStats['pengeluaran']
         );
         
-        $saldo = ($currentStats['pemasukan'] ?? 0) - ($currentStats['pengeluaran'] ?? 0);
+        $saldo = $currentStats['pemasukan'] - $currentStats['pengeluaran'];
         
         return [
             'current_month' => [
-                'pemasukan' => $currentStats['pemasukan'] ?? 0,
-                'pengeluaran' => $currentStats['pengeluaran'] ?? 0,
+                'pemasukan' => $currentStats['pemasukan'],
+                'pengeluaran' => $currentStats['pengeluaran'],
                 'saldo' => $saldo,
-                'transaksi_count' => $currentStats['total_transaksi'] ?? 0
+                'transaksi_count' => $currentStats['total_transaksi']
             ],
             'trends' => [
                 'pemasukan' => $pemasukanTrend,
                 'pengeluaran' => $pengeluaranTrend
             ],
-            'total_balance' => $this->getTotalBalance($userId)
+            'total_balance' => $this->getTotalBalance($userId),
+            'last_month' => [
+                'pemasukan' => $lastMonthStats['pemasukan'],
+                'pengeluaran' => $lastMonthStats['pengeluaran']
+            ]
         ];
     }
     
     private function getMonthlyStats($userId, $month) {
         $sql = "SELECT 
-                    SUM(CASE WHEN tipe = 'pemasukan' THEN jumlah_idr ELSE 0 END) as pemasukan,
-                    SUM(CASE WHEN tipe = 'pengeluaran' THEN jumlah_idr ELSE 0 END) as pengeluaran,
+                    COALESCE(SUM(CASE WHEN tipe = 'pemasukan' THEN jumlah_idr ELSE 0 END), 0) as pemasukan,
+                    COALESCE(SUM(CASE WHEN tipe = 'pengeluaran' THEN jumlah_idr ELSE 0 END), 0) as pengeluaran,
                     COUNT(*) as total_transaksi
                 FROM transaksi
                 WHERE user_id = :user_id 
@@ -59,52 +63,68 @@ class AnalyticsService {
             'month' => $month
         ]);
         
+        // Ensure we always return numeric values, even if no data exists
         return [
-            'pemasukan' => (float)($result['pemasukan'] ?? 0),
-            'pengeluaran' => (float)($result['pengeluaran'] ?? 0),
-            'total_transaksi' => (int)($result['total_transaksi'] ?? 0)
+            'pemasukan' => $result ? (float)$result['pemasukan'] : 0,
+            'pengeluaran' => $result ? (float)$result['pengeluaran'] : 0,
+            'total_transaksi' => $result ? (int)$result['total_transaksi'] : 0
         ];
     }
     
     private function getTotalBalance($userId) {
         $sql = "SELECT 
-                    SUM(CASE WHEN tipe = 'pemasukan' THEN jumlah_idr ELSE 0 END) -
-                    SUM(CASE WHEN tipe = 'pengeluaran' THEN jumlah_idr ELSE 0 END) as balance
+                    COALESCE(SUM(CASE WHEN tipe = 'pemasukan' THEN jumlah_idr ELSE 0 END), 0) -
+                    COALESCE(SUM(CASE WHEN tipe = 'pengeluaran' THEN jumlah_idr ELSE 0 END), 0) as balance
                 FROM transaksi
                 WHERE user_id = :user_id";
         
         $result = $this->db->fetchOne($sql, ['user_id' => $userId]);
-        return (float)($result['balance'] ?? 0);
+        return $result ? (float)$result['balance'] : 0;
     }
     
     private function calculateTrend($current, $previous) {
+        // Handle null or zero values
+        $current = (float)$current;
+        $previous = (float)$previous;
+        
+        // If both are zero, no change
+        if ($current == 0 && $previous == 0) {
+            return 0;
+        }
+        
+        // If previous is zero but current has value, return 100% increase
         if ($previous == 0) {
             return $current > 0 ? 100 : 0;
         }
         
-        return round((($current - $previous) / $previous) * 100, 2);
+        // Calculate percentage change
+        $trend = (($current - $previous) / $previous) * 100;
+        return round($trend, 2);
     }
     
     public function getBorosKategori($userId, $months = 3) {
         $sql = "SELECT 
                     k.nama as kategori,
                     k.color,
-                    SUM(t.jumlah_idr) as total,
+                    COALESCE(SUM(t.jumlah_idr), 0) as total,
                     COUNT(t.id) as transaksi_count,
-                    AVG(t.jumlah_idr) as rata_rata
+                    COALESCE(AVG(t.jumlah_idr), 0) as rata_rata
                 FROM transaksi t
                 LEFT JOIN kategori k ON t.kategori_id = k.id
                 WHERE t.user_id = :user_id 
                 AND t.tipe = 'pengeluaran'
                 AND t.tanggal >= DATE_SUB(CURDATE(), INTERVAL :months MONTH)
-                GROUP BY t.kategori_id
+                GROUP BY t.kategori_id, k.nama, k.color
+                HAVING total > 0
                 ORDER BY total DESC
                 LIMIT 5";
         
-        return $this->db->fetchAll($sql, [
+        $result = $this->db->fetchAll($sql, [
             'user_id' => $userId,
             'months' => $months
         ]);
+        
+        return $result ? $result : [];
     }
     
     public function getRecommendations($userId) {
@@ -116,8 +136,8 @@ class AnalyticsService {
         $currentStats = $this->getMonthlyStats($userId, $currentMonth);
         $lastMonthStats = $this->getMonthlyStats($userId, $lastMonth);
         
-        // Check if spending increased
-        if ($currentStats['pengeluaran'] > $lastMonthStats['pengeluaran'] * 1.2) {
+        // Check if spending increased (only if there's data to compare)
+        if ($lastMonthStats['pengeluaran'] > 0 && $currentStats['pengeluaran'] > $lastMonthStats['pengeluaran'] * 1.2) {
             $increase = round((($currentStats['pengeluaran'] - $lastMonthStats['pengeluaran']) / $lastMonthStats['pengeluaran']) * 100, 1);
             $recommendations[] = [
                 'type' => 'warning',
@@ -148,7 +168,7 @@ class AnalyticsService {
                 'message' => 'Pengeluaran melebihi pemasukan. Pertimbangkan untuk mengurangi pengeluaran atau mencari sumber pemasukan tambahan.',
                 'icon' => 'alert-triangle'
             ];
-        } elseif ($balance < 500000) {
+        } elseif ($balance > 0 && $balance < 500000) {
             $recommendations[] = [
                 'type' => 'warning',
                 'title' => 'Saldo Rendah',
@@ -157,17 +177,32 @@ class AnalyticsService {
             ];
         }
         
-        // Savings suggestion
-        $savingsRate = $currentStats['pemasukan'] > 0 
-            ? (($currentStats['pemasukan'] - $currentStats['pengeluaran']) / $currentStats['pemasukan']) * 100 
-            : 0;
-        
-        if ($savingsRate < 20 && $currentStats['pemasukan'] > 0) {
+        // Savings suggestion (only if there's income)
+        if ($currentStats['pemasukan'] > 0) {
+            $savingsRate = (($currentStats['pemasukan'] - $currentStats['pengeluaran']) / $currentStats['pemasukan']) * 100;
+            
+            if ($savingsRate < 20) {
+                $recommendations[] = [
+                    'type' => 'info',
+                    'title' => 'Tips Menabung',
+                    'message' => 'Usahakan menyisihkan minimal 20% dari pemasukan untuk tabungan. Saat ini tingkat tabungan: ' . round($savingsRate, 1) . '%',
+                    'icon' => 'piggy-bank'
+                ];
+            } elseif ($savingsRate > 50) {
+                $recommendations[] = [
+                    'type' => 'success',
+                    'title' => 'Hebat! Tabungan Bagus',
+                    'message' => 'Anda berhasil menabung ' . round($savingsRate, 1) . '% dari pemasukan. Pertahankan!',
+                    'icon' => 'thumbs-up'
+                ];
+            }
+        } else if ($currentStats['transaksi_count'] == 0) {
+            // No transactions yet
             $recommendations[] = [
                 'type' => 'info',
-                'title' => 'Tips Menabung',
-                'message' => 'Usahakan menyisihkan minimal 20% dari pemasukan untuk tabungan. Saat ini tingkat tabungan: ' . round($savingsRate, 1) . '%',
-                'icon' => 'piggy-bank'
+                'title' => 'Mulai Catat Transaksi',
+                'message' => 'Belum ada transaksi bulan ini. Mulai catat pemasukan dan pengeluaran Anda untuk analisis yang lebih baik.',
+                'icon' => 'plus-circle'
             ];
         }
         

@@ -42,10 +42,13 @@ class JatuhTempo {
     }
     
     public function getUpcoming($userId, $days = 7) {
-        $sql = "SELECT * FROM jatuh_tempo 
+        $sql = "SELECT *, 
+                DATEDIFF(tanggal_jatuh_tempo, CURDATE()) as days_remaining
+                FROM jatuh_tempo 
                 WHERE user_id = :user_id 
                 AND status = 'pending'
-                AND tanggal_jatuh_tempo BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL :days DAY)
+                AND tanggal_jatuh_tempo >= CURDATE()
+                AND tanggal_jatuh_tempo <= DATE_ADD(CURDATE(), INTERVAL :days DAY)
                 ORDER BY tanggal_jatuh_tempo ASC";
         
         return $this->db->fetchAll($sql, [

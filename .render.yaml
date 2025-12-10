@@ -1,0 +1,53 @@
+# .render.yaml
+# Deploy PHP app (no Docker) + PostgreSQL — 1-klik di Render
+
+services:
+  # === Web Service: Aplikasi PHP ===
+  - type: web
+    name: keuangan-mahasiswa
+    env: php                     # ← Render otomatis pakai PHP buildpack
+    region: oregon               # bisa diganti: frankfurt, singapore, etc.
+    plan: free
+    buildCommand: ""             # biarkan kosong — buildpack otomatis jalankan `composer install`
+    startCommand: "php -S 0.0.0.0:$PORT public/index.php"
+    healthCheckPath: "/health.php"
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_CHANNEL
+        value: errorlog
+      # DB akan di-link otomatis via internal network
+      - key: DB_HOST
+        fromService:
+          name: keuangan-mahasiswa-db
+          property: host
+      - key: DB_PORT
+        fromService:
+          name: keuangan-mahasiswa-db
+          property: port
+      - key: DB_NAME
+        fromService:
+          name: keuangan-mahasiswa-db
+          property: database
+      - key: DB_USER
+        fromService:
+          name: keuangan-mahasiswa-db
+          property: user
+      - key: DB_PASS
+        fromService:
+          name: keuangan-mahasiswa-db
+          property: password
+      - key: DB_DRIVER
+        value: pgsql   # atau "mysql" jika ganti ke MySQL
+
+  # === Database: PostgreSQL Gratis ===
+  - type: postgres
+    name: keuangan-mahasiswa-db
+    databaseName: keuangan_mahasiswa
+    user: app_user
+    plan: free
+    ipAllowList: []  # hanya akses internal (lebih aman)
+
+  # === (Opsional) Health Check File ===
+  # Render butuh file /health.php → buat di `public/health.php`:
+  #   <?php http_response_code(200); echo 'OK'; ?>

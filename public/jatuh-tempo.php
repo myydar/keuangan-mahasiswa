@@ -106,14 +106,20 @@ $upcoming = $jatuhTempoModel->getUpcoming($userId, 7);
                 <?php if (!empty($upcoming)): ?>
                 <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-6">
                     <h3 class="font-semibold text-yellow-800 mb-2">
-                        <i class="fas fa-bell mr-2"></i>Pembayaran Segera Jatuh Tempo (7 Hari Ke Depan)
+                        <i class="fas fa-bell mr-2"></i>Pembayaran Segera Jatuh Tempo
                     </h3>
                     <ul class="space-y-1">
                         <?php foreach ($upcoming as $item): ?>
-                        <li class="text-sm text-yellow-700">
+                        <?php 
+                            $daysRemaining = (int)$item['days_remaining'];
+                            $urgencyClass = $daysRemaining == 0 ? 'text-red-700 font-bold' : ($daysRemaining <= 3 ? 'text-orange-700' : 'text-yellow-700');
+                            $urgencyText = $daysRemaining == 0 ? 'HARI INI!' : ($daysRemaining == 1 ? 'BESOK!' : "dalam {$daysRemaining} hari");
+                        ?>
+                        <li class="text-sm <?= $urgencyClass ?>">
                             • <?= htmlspecialchars($item['judul']) ?> - 
                             <strong><?= date('d M Y', strtotime($item['tanggal_jatuh_tempo'])) ?></strong>
-                            (Rp <?= number_format($item['jumlah'], 0, ',', '.') ?>)
+                            (<?= $urgencyText ?>) -
+                            Rp <?= number_format($item['jumlah'], 0, ',', '.') ?>
                         </li>
                         <?php endforeach; ?>
                     </ul>
@@ -176,10 +182,39 @@ $upcoming = $jatuhTempoModel->getUpcoming($userId, 7);
                         <?php else: ?>
                         <div class="space-y-4">
                             <?php foreach ($pending as $item): ?>
-                            <div class="border rounded-lg p-4 hover:bg-gray-50">
+                            <?php
+                                $today = date('Y-m-d');
+                                $dueDate = $item['tanggal_jatuh_tempo'];
+                                $diff = (strtotime($dueDate) - strtotime($today)) / (60 * 60 * 24);
+                                
+                                // Determine urgency
+                                if ($diff < 0) {
+                                    $urgencyColor = 'red';
+                                    $urgencyIcon = 'exclamation-triangle';
+                                    $urgencyText = 'TERLAMBAT ' . abs((int)$diff) . ' hari!';
+                                } elseif ($diff == 0) {
+                                    $urgencyColor = 'red';
+                                    $urgencyIcon = 'bell';
+                                    $urgencyText = 'JATUH TEMPO HARI INI!';
+                                } elseif ($diff <= 3) {
+                                    $urgencyColor = 'orange';
+                                    $urgencyIcon = 'clock';
+                                    $urgencyText = $diff == 1 ? 'Jatuh tempo BESOK' : 'Jatuh tempo ' . (int)$diff . ' hari lagi';
+                                } else {
+                                    $urgencyColor = 'blue';
+                                    $urgencyIcon = 'calendar';
+                                    $urgencyText = 'Jatuh tempo ' . (int)$diff . ' hari lagi';
+                                }
+                            ?>
+                            <div class="border border-<?= $urgencyColor ?>-200 bg-<?= $urgencyColor ?>-50 rounded-lg p-4 hover:bg-<?= $urgencyColor ?>-100">
                                 <div class="flex justify-between items-start">
                                     <div class="flex-1">
-                                        <h4 class="font-semibold text-gray-800"><?= htmlspecialchars($item['judul']) ?></h4>
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <h4 class="font-semibold text-gray-800"><?= htmlspecialchars($item['judul']) ?></h4>
+                                            <span class="px-2 py-1 bg-<?= $urgencyColor ?>-200 text-<?= $urgencyColor ?>-800 text-xs rounded-full font-semibold">
+                                                <i class="fas fa-<?= $urgencyIcon ?> mr-1"></i><?= $urgencyText ?>
+                                            </span>
+                                        </div>
                                         <p class="text-sm text-gray-600 mt-1">
                                             <i class="fas fa-tag mr-1"></i><?= ucfirst($item['kategori']) ?>
                                         </p>
